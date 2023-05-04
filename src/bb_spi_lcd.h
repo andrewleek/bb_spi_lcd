@@ -104,7 +104,6 @@ typedef struct tagSPILCD
   int iWidth, iHeight; // native direction size
   int iCurrentWidth, iCurrentHeight; // rotated size
   int iCSPin, iCLKPin, iMOSIPin, iDCPin, iResetPin, iLEDPin, iTCSPin;
-  bool touchEnabled;
   int32_t iSPISpeed, iSPIMode, iTSPISpeed; // SPI settings
   int iScreenPitch, iOffset, iMaxOffset; // display RAM values
   int iColStart, iRowStart, iMemoryX, iMemoryY; // display oddities

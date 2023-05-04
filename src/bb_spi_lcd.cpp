@@ -31,7 +31,7 @@
 //#endif
 
 #if defined(__SAMD51__)
-#define ARDUINO_SAMD_ZERO
+    #define ARDUINO_SAMD_ZERO
 #endif
 
 #if defined( ARDUINO_SAMD_ZERO )
@@ -70,38 +70,37 @@ SPIClass mySPI(
 #endif // ARDUINO_SAMD_ZERO
 
 #ifdef _LINUX_
-#include <stdint.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <string.h>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <linux/i2c-dev.h>
-#include <math.h>
-#include <armbianio.h>
-#define false 0
-#define true 1
-#define PROGMEM
-#define memcpy_P memcpy
-// convert wire library constants into ArmbianIO values
-#define OUTPUT GPIO_OUT
-#define INPUT GPIO_IN
-#define INPUT_PULLUP GPIO_IN_PULLUP
-#define HIGH 1
-#define LOW 0
-static int iHandle; // SPI handle
+    #include <stdint.h>
+    #include <stdlib.h>
+    #include <unistd.h>
+    #include <stdio.h>
+    #include <string.h>
+    #include <fcntl.h>
+    #include <sys/ioctl.h>
+    #include <linux/i2c-dev.h>
+    #include <math.h>
+    #include <armbianio.h>
+    #define false 0
+    #define true 1
+    #define PROGMEM
+    #define memcpy_P memcpy
+    // convert wire library constants into ArmbianIO values
+    #define OUTPUT GPIO_OUT
+    #define INPUT GPIO_IN
+    #define INPUT_PULLUP GPIO_IN_PULLUP
+    #define HIGH 1
+    #define LOW 0
+    static int iHandle; // SPI handle
 #else // Arduino
-// Use the default (non DMA) SPI library for boards we don't currently support
-#if !defined(__SAMD51__) && !defined(ARDUINO_SAMD_ZERO) && !defined(ARDUINO_ARCH_RP2040)
-#define mySPI SPI
-#elif defined(ARDUINO_ARCH_RP2040)
-MbedSPI *pSPI = new MbedSPI(12,11,13);
-//MbedSPI *pSPI = new MbedSPI(4,7,6); // use GPIO numbers, not pin #s
-#endif
-
-#include <Arduino.h>
-#include <SPI.h>
+    // Use the default (non DMA) SPI library for boards we don't currently support
+    #if !defined(__SAMD51__) && !defined(ARDUINO_SAMD_ZERO) && !defined(ARDUINO_ARCH_RP2040)
+        #define mySPI SPI
+    #elif defined(ARDUINO_ARCH_RP2040)
+        MbedSPI *pSPI = new MbedSPI(12,11,13);
+        //MbedSPI *pSPI = new MbedSPI(4,7,6); // use GPIO numbers, not pin #s
+    #endif
+    #include <Arduino.h>
+    #include <SPI.h>
 #endif // LINUX
 
 #include <bb_spi_lcd.h>
@@ -120,57 +119,63 @@ MbedSPI *pSPI = new MbedSPI(12,11,13);
 volatile int iCurrentCS;
 
 #ifdef ESP32_DMA
-#include "driver/spi_master.h"
-static void spi_pre_transfer_callback(spi_transaction_t *t);
-static spi_device_interface_config_t devcfg;
-static spi_device_interface_config_t touchdevcfg;
-static spi_bus_config_t buscfg;
-static int iStarted = 0; // indicates if the master driver has already been initialized
-static int iTouchStarted = 0; // indicates if the master driver has already been initialized
-static void spi_post_transfer_callback(spi_transaction_t *t);
-// ODROID-GO
-//const gpio_num_t SPI_PIN_NUM_MISO = GPIO_NUM_19;
-//const gpio_num_t SPI_PIN_NUM_MOSI = GPIO_NUM_23;
-//const gpio_num_t SPI_PIN_NUM_CLK  = GPIO_NUM_18;
-// M5StickC
-//const gpio_num_t SPI_PIN_NUM_MISO = GPIO_NUM_19;
-//const gpio_num_t SPI_PIN_NUM_MOSI = GPIO_NUM_15;
-//const gpio_num_t SPI_PIN_NUM_CLK  = GPIO_NUM_13;
-static spi_transaction_t trans[2];
-static spi_device_handle_t spi;
-static spi_device_handle_t touchSPI;
-//static TaskHandle_t xTaskToNotify = NULL;
-// ESP32 has enough memory to spare 4K
-DMA_ATTR uint8_t ucTXBuf[4096]="";
-static unsigned char ucRXBuf[4096];
-#ifndef ESP32_DMA
-static int iTXBufSize = 4096; // max reasonable size
-#endif // ESP32_DMA
+    #include "driver/spi_master.h"
+    static void spi_pre_transfer_callback(spi_transaction_t *t);
+    static spi_device_interface_config_t devcfg;
+    
+    #ifdef TOUCH_CS
+        static spi_device_interface_config_t touchdevcfg;
+        static int iTouchStarted = 0; // indicates if the touch driver has already been initialized
+    #endif
+
+    static spi_bus_config_t buscfg;
+    static int iStarted = 0; // indicates if the master driver has already been initialized
+    static void spi_post_transfer_callback(spi_transaction_t *t);
+    // ODROID-GO
+    //const gpio_num_t SPI_PIN_NUM_MISO = GPIO_NUM_19;
+    //const gpio_num_t SPI_PIN_NUM_MOSI = GPIO_NUM_23;
+    //const gpio_num_t SPI_PIN_NUM_CLK  = GPIO_NUM_18;
+    // M5StickC
+    //const gpio_num_t SPI_PIN_NUM_MISO = GPIO_NUM_19;
+    //const gpio_num_t SPI_PIN_NUM_MOSI = GPIO_NUM_15;
+    //const gpio_num_t SPI_PIN_NUM_CLK  = GPIO_NUM_13;
+    static spi_transaction_t trans[2];
+    static spi_device_handle_t spi;
+    static spi_device_handle_t touchSPI;
+    //static TaskHandle_t xTaskToNotify = NULL;
+    // ESP32 has enough memory to spare 4K
+    DMA_ATTR uint8_t ucTXBuf[4096]="";
+    static unsigned char ucRXBuf[4096];
+    #ifndef ESP32_DMA
+        static int iTXBufSize = 4096; // max reasonable size
+    #endif // ESP32_DMA
 #else
-static int iTXBufSize;
-static unsigned char *ucTXBuf;
-#ifdef __AVR__
-static unsigned char ucRXBuf[512];
-#else
-#ifdef ARDUINO_ARCH_RP2040
-// RP2040 somehow allocates this on an odd byte boundary if we don't
-// explicitly align the memory
-static unsigned char ucRXBuf[2048] __attribute__((aligned (16)));
-#else
-static unsigned char ucRXBuf[2048];
-#endif // RP2040
-#endif // __AVR__
+    static int iTXBufSize;
+    static unsigned char *ucTXBuf;
+    #ifdef __AVR__
+        static unsigned char ucRXBuf[512];
+    #else
+        #ifdef ARDUINO_ARCH_RP2040
+            // RP2040 somehow allocates this on an odd byte boundary if we don't explicitly align the memory
+            static unsigned char ucRXBuf[2048] __attribute__((aligned (16)));
+        #else
+            static unsigned char ucRXBuf[2048];
+        #endif // RP2040
+    #endif // __AVR__
 #endif // !ESP32
+
 #define LCD_DELAY 0xff
 #ifdef __AVR__
-volatile uint8_t *outDC, *outCS; // port registers for fast I/O
-uint8_t bitDC, bitCS; // bit mask for the chosen pins
+    volatile uint8_t *outDC, *outCS; // port registers for fast I/O
+    uint8_t bitDC, bitCS; // bit mask for the chosen pins
 #endif
+
 #ifdef HAS_DMA
-volatile bool transfer_is_done = true; // Done yet?
-void spilcdWaitDMA(void);
-void spilcdWriteDataDMA(SPILCD *pLCD, int iLen);
+    volatile bool transfer_is_done = true; // Done yet?
+    void spilcdWaitDMA(void);
+    void spilcdWriteDataDMA(SPILCD *pLCD, int iLen);
 #endif
+
 static void myPinWrite(int iPin, int iValue);
 //static int32_t iSPISpeed;
 //static int iCSPin, iDCPin, iResetPin, iLEDPin; // pin numbers for the GPIO control lines
@@ -204,6 +209,7 @@ const unsigned char ucE0_0[] PROGMEM = {0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E
 const unsigned char ucE1_0[] PROGMEM = {0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F};
 const unsigned char ucE0_1[] PROGMEM = {0x1f, 0x1a, 0x18, 0x0a, 0x0f, 0x06, 0x45, 0x87, 0x32, 0x0a, 0x07, 0x02, 0x07, 0x05, 0x00};
 const unsigned char ucE1_1[] PROGMEM = {0x00, 0x25, 0x27, 0x05, 0x10, 0x09, 0x3a, 0x78, 0x4d, 0x05, 0x18, 0x0d, 0x38, 0x3a, 0x1f};
+
 // Table to convert a group of 4 1-bit pixels to a 2-bit gray level
 const uint8_t ucGray2BPP[256] PROGMEM =
 {   0x00,0x01,0x01,0x02,0x04,0x05,0x05,0x06,0x04,0x05,0x05,0x06,0x08,0x09,0x09,0x0a,
@@ -755,67 +761,69 @@ const uint8_t ucSmallFont[]PROGMEM = {
 
 // wrapper/adapter functions to make the code work on Linux
 #ifdef _LINUX_
-static int digitalRead(int iPin)
-{
-  return AIOReadGPIO(iPin);
-} /* digitalRead() */
+    static int digitalRead(int iPin)
+    {
+        return AIOReadGPIO(iPin);
+    } /* digitalRead() */
 
-static void digitalWrite(int iPin, int iState)
-{
-   AIOWriteGPIO(iPin, iState);
-} /* digitalWrite() */
+    static void digitalWrite(int iPin, int iState)
+    {
+        AIOWriteGPIO(iPin, iState);
+    } /* digitalWrite() */
 
-static void pinMode(int iPin, int iMode)
-{
-   AIOAddGPIO(iPin, iMode);
-} /* pinMode() */
+    static void pinMode(int iPin, int iMode)
+    {
+        AIOAddGPIO(iPin, iMode);
+    } /* pinMode() */
 
-static void delay(int iMS)
-{
-  usleep(iMS * 1000);
-} /* delay() */
+    static void delay(int iMS)
+    {
+        usleep(iMS * 1000);
+    } /* delay() */
 
-static void delayMicroseconds(int iMS)
-{
-  usleep(iMS);
-} /* delayMicroseconds() */
+    static void delayMicroseconds(int iMS)
+    {
+        usleep(iMS);
+    } /* delayMicroseconds() */
 
-static uint8_t pgm_read_byte(uint8_t *ptr)
-{
-  return *ptr;
-}
-#ifdef FUTURE
-static int16_t pgm_read_word(uint8_t *ptr)
-{
-  return ptr[0] + (ptr[1]<<8);
-}
-#endif // FUTURE
+    static uint8_t pgm_read_byte(uint8_t *ptr)
+    {
+        return *ptr;
+    }
+
+    #ifdef FUTURE
+        static int16_t pgm_read_word(uint8_t *ptr)
+        {
+            return ptr[0] + (ptr[1]<<8);
+        }
+    #endif // FUTURE
+
 #endif // _LINUX_
 //
 // Provide a small temporary buffer for use by the graphics functions
 //
 void spilcdSetTXBuffer(uint8_t *pBuf, int iSize)
 {
-#ifndef ESP32_DMA
-  ucTXBuf = pBuf;
-  iTXBufSize = iSize;
-#endif
+    #ifndef ESP32_DMA
+        ucTXBuf = pBuf;
+        iTXBufSize = iSize;
+    #endif
 } /* spilcdSetTXBuffer() */
 
 // Sets the D/C pin to data or command mode
 void spilcdSetMode(SPILCD *pLCD, int iMode)
 {
-#ifdef __AVR__
-    if (iMode == MODE_DATA)
-       *outDC |= bitDC;
-    else
-       *outDC &= ~bitDC;
-#else
-	myPinWrite(pLCD->iDCPin, iMode == MODE_DATA);
-#endif
-#ifdef ARDUINO_ARCH_ESP32
-	delayMicroseconds(1); // some systems are so fast that it needs to be delayed
-#endif
+    #ifdef __AVR__
+        if (iMode == MODE_DATA)
+        *outDC |= bitDC;
+        else
+        *outDC &= ~bitDC;
+    #else
+        myPinWrite(pLCD->iDCPin, iMode == MODE_DATA);
+    #endif
+    #ifdef ARDUINO_ARCH_ESP32
+        delayMicroseconds(1); // some systems are so fast that it needs to be delayed
+    #endif
 } /* spilcdSetMode() */
 
 const unsigned char ucGC9A01InitList[]PROGMEM = {
@@ -1344,14 +1352,15 @@ static void myspiWrite(SPILCD *pLCD, unsigned char *pBuf, int iLen, int iMode, i
             }
         }
     }
+
     if (!(iFlags & DRAW_TO_LCD))
         return; // don't write it to the display
-#ifdef ARDUINO_ARCH_ESP32
-    if (pLCD->pfnDataCallback) {
-        spilcdParallelData(pBuf, iLen);
-        return;
-    }
-#endif
+    #ifdef ARDUINO_ARCH_ESP32
+        if (pLCD->pfnDataCallback) {
+            spilcdParallelData(pBuf, iLen);
+            return;
+        }
+    #endif
     if (pLCD->pfnDataCallback != NULL)
     {
        (*pLCD->pfnDataCallback)(pBuf, iLen, iMode);
@@ -1364,89 +1373,86 @@ static void myspiWrite(SPILCD *pLCD, unsigned char *pBuf, int iLen, int iMode, i
     }
     if (iMode == MODE_COMMAND)
     {
-#ifdef HAS_DMA
-        spilcdWaitDMA(); // wait for any previous transaction to finish
-#endif
+        #ifdef HAS_DMA
+            spilcdWaitDMA(); // wait for any previous transaction to finish
+        #endif
         spilcdSetMode(pLCD, MODE_COMMAND);
     }
     if ((iFlags & DRAW_WITH_DMA) == 0 || iMode == MODE_COMMAND)
     {
-#ifdef __AVR__
-      *outCS &= ~bitCS;
-#else
-      myPinWrite(pLCD->iCSPin, 0);
-#endif // __AVR__
+        #ifdef __AVR__
+            *outCS &= ~bitCS;
+        #else
+            myPinWrite(pLCD->iCSPin, 0);
+        #endif // __AVR__
     }
-#ifdef ESP32_DMA
-    // don't use DMA
-    if (iMode == MODE_COMMAND || !(iFlags & DRAW_WITH_DMA))
-    {
-        esp_err_t ret;
-        static spi_transaction_t t;
-        iCurrentCS = -1;
-        memset(&t, 0, sizeof(t));       //Zero out the transaction
-        t.length=iLen*8;  // length in bits
-        t.tx_buffer=pBuf;
-        t.user=(void*)iMode;
-    // Queue the transaction
-//    ret = spi_device_queue_trans(spi, &t, portMAX_DELAY);
-        ret=spi_device_polling_transmit(spi, &t);  //Transmit!
-        assert(ret==ESP_OK);            //Should have had no issues.
-        if (iMode == MODE_COMMAND) // restore D/C pin to DATA
-            spilcdSetMode(pLCD, MODE_DATA);
-        myPinWrite(pLCD->iCSPin, 1);
-        return;
-    }
-    // wait for it to complete
-//    spi_transaction_t *rtrans;
-//    spi_device_get_trans_result(spi, &rtrans, portMAX_DELAY);
-#endif
-#ifdef HAS_DMA
-    if (iMode == MODE_DATA && (iFlags & DRAW_WITH_DMA)) // only pixels will get DMA treatment
-    {
-        spilcdWaitDMA(); // wait for any previous transaction to finish
-        iCurrentCS = pLCD->iCSPin;
-        myPinWrite(pLCD->iCSPin, 0);
-        if (pBuf != ucTXBuf) // for DMA, we must use the one output buffer
-            memcpy(ucTXBuf, pBuf, iLen);
-        spilcdWriteDataDMA(pLCD, iLen);
-        return;
-    }
-#endif // HAS_DMA
+
+    #ifdef ESP32_DMA
+        // don't use DMA
+        if (iMode == MODE_COMMAND || !(iFlags & DRAW_WITH_DMA))
+        {
+            esp_err_t ret;
+            static spi_transaction_t t;
+            iCurrentCS = -1;
+            memset(&t, 0, sizeof(t));       //Zero out the transaction
+            t.length=iLen*8;  // length in bits
+            t.tx_buffer=pBuf;
+            t.user=(void*)iMode;
+            ret=spi_device_polling_transmit(spi, &t);  //Transmit!
+            assert(ret==ESP_OK);            //Should have had no issues.
+            if (iMode == MODE_COMMAND) // restore D/C pin to DATA
+                spilcdSetMode(pLCD, MODE_DATA);
+            myPinWrite(pLCD->iCSPin, 1);
+            return;
+        }
+    #endif
+
+    #ifdef HAS_DMA
+        if (iMode == MODE_DATA && (iFlags & DRAW_WITH_DMA)) // only pixels will get DMA treatment
+        {
+            spilcdWaitDMA(); // wait for any previous transaction to finish
+            iCurrentCS = pLCD->iCSPin;
+            myPinWrite(pLCD->iCSPin, LOW);
+            if (pBuf != ucTXBuf) // for DMA, we must use the one output buffer
+                memcpy(ucTXBuf, pBuf, iLen);
+            spilcdWriteDataDMA(pLCD, iLen);
+            return;
+        }
+    #endif // HAS_DMA
         
-// No DMA requested or available, fall through to here
-#ifdef _LINUX_
-    AIOWriteSPI(iHandle, pBuf, iLen);
-#else
-#ifdef ARDUINO_ARCH_RP2040
-    pSPI->beginTransaction(SPISettings(pLCD->iSPISpeed, MSBFIRST, pLCD->iSPIMode));
-#else
-    mySPI.beginTransaction(SPISettings(pLCD->iSPISpeed, MSBFIRST, pLCD->iSPIMode));
-#endif
-#ifdef ARDUINO_ARCH_ESP32
-    mySPI.transferBytes(pBuf, ucRXBuf, iLen);
-#else
-#ifdef ARDUINO_ARCH_RP2040
-    pSPI->transfer(pBuf, iLen);
-#else
-    mySPI.transfer(pBuf, iLen);
-#endif // RP2040
-#endif
-#ifdef ARDUINO_ARCH_RP2040
-    pSPI->endTransaction();
-#else
-    mySPI.endTransaction();
-#endif
-#endif // _LINUX_
+    // No DMA requested or available, fall through to here
+    #ifdef _LINUX_
+        AIOWriteSPI(iHandle, pBuf, iLen);
+    #else
+        #ifdef ARDUINO_ARCH_RP2040
+            pSPI->beginTransaction(SPISettings(pLCD->iSPISpeed, MSBFIRST, pLCD->iSPIMode));
+        #else
+            mySPI.beginTransaction(SPISettings(pLCD->iSPISpeed, MSBFIRST, pLCD->iSPIMode));
+        #endif
+        #ifdef ARDUINO_ARCH_ESP32
+            mySPI.transferBytes(pBuf, ucRXBuf, iLen);
+        #else
+            #ifdef ARDUINO_ARCH_RP2040
+                pSPI->transfer(pBuf, iLen);
+            #else
+                mySPI.transfer(pBuf, iLen);
+            #endif // RP2040
+        #endif
+        #ifdef ARDUINO_ARCH_RP2040
+            pSPI->endTransaction();
+        #else
+            mySPI.endTransaction();
+        #endif
+    #endif // _LINUX_
     if (iMode == MODE_COMMAND) // restore D/C pin to DATA
         spilcdSetMode(pLCD, MODE_DATA);
     if (pLCD->iCSPin != -1)
     {
-#ifdef __AVR__
-       *outCS |= bitCS;
-#else
-       myPinWrite(pLCD->iCSPin, 1);
-#endif
+        #ifdef __AVR__
+            *outCS |= bitCS;
+        #else
+            myPinWrite(pLCD->iCSPin, HIGH);
+        #endif
     }
 } /* myspiWrite() */
 
@@ -1455,10 +1461,10 @@ static void myspiWrite(SPILCD *pLCD, unsigned char *pBuf, int iLen, int iMode, i
 //
 void spilcdWriteDataBlock(SPILCD *pLCD, uint8_t *pData, int iLen, int iFlags)
 {
-#ifdef LOG_OUTPUT
-    Serial.printf("writeDataBlock: %d\n", iLen);
-#endif
-  myspiWrite(pLCD, pData, iLen, MODE_DATA, iFlags);
+    #ifdef LOG_OUTPUT
+        Serial.printf("writeDataBlock: %d\n", iLen);
+    #endif
+    myspiWrite(pLCD, pData, iLen, MODE_DATA, iFlags);
 } /* spilcdWriteDataBlock() */
 //
 // spilcdWritePixelsMasked
@@ -1598,6 +1604,8 @@ void spilcdSetCallbacks(SPILCD *pLCD, RESETCALLBACK pfnReset, DATACALLBACK pfnDa
     pLCD->pfnDataCallback = pfnData;
     pLCD->pfnResetCallback = pfnReset;
 }
+
+#ifdef TOUCH_CS
 /***************************************************************************************
 ** Function name:           begin_touch_read_write - was spi_begin_touch
 ** Description:             Start transaction and select touch controller
@@ -1609,29 +1617,25 @@ inline void begin_touch_read_write(SPILCD *pLCD)
         spilcdWaitDMA(); // wait for any previous transaction to finish
     #endif
 
-    //if(transfer_is_done)
-    //{
-    //    transfer_is_done = false;
+    myPinWrite(pLCD->iCSPin, HIGH); // disable lcd
 
-        myPinWrite(pLCD->iCSPin, HIGH); // disable lcd
-
-        #ifdef ARDUINO_ARCH_RP2040
-            #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS)
-                pSPI->beginTransaction(SPISettings(pLCD->iTSPISpeed, MSBFIRST, pLCD->iSPIMode));
-            #else
-                pSPI->setFrequency(pLCD->iTSPISpeed);
-            #endif
+    #ifdef ARDUINO_ARCH_RP2040
+        #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS)
+            pSPI->beginTransaction(SPISettings(pLCD->iTSPISpeed, MSBFIRST, pLCD->iSPIMode));
         #else
-            #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS)
-                mySPI.beginTransaction(SPISettings(pLCD->iTSPISpeed, MSBFIRST, pLCD->iSPIMode));
-            #else
-                mySPI.setFrequency(pLCD->iTSPISpeed);
-            #endif
+            pSPI->setFrequency(pLCD->iTSPISpeed);
         #endif
+    #else
+        #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS)
+            mySPI.beginTransaction(SPISettings(pLCD->iTSPISpeed, MSBFIRST, pLCD->iSPIMode));
+        #else
+            mySPI.setFrequency(pLCD->iTSPISpeed);
+        #endif
+    #endif
 
-        myPinWrite(pLCD->iTCSPin, LOW); // enable touch
-    //}
+    myPinWrite(pLCD->iTCSPin, LOW); // enable touch
 }
+
 /***************************************************************************************
 ** Function name:           end_touch_read_write - was spi_end_touch
 ** Description:             End transaction and deselect touch controller
@@ -1639,8 +1643,6 @@ inline void begin_touch_read_write(SPILCD *pLCD)
 inline void end_touch_read_write(SPILCD *pLCD)
 {
     myPinWrite(pLCD->iTCSPin, HIGH); // disable touch
-
-    //Serial.print("end_touch_read_write");
 
     #ifdef ARDUINO_ARCH_RP2040
         #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS)
@@ -1655,11 +1657,8 @@ inline void end_touch_read_write(SPILCD *pLCD)
             mySPI.setFrequency(pLCD->iSPISpeed);
         #endif
     #endif
-
-    //myPinWrite(pLCD->iCSPin, LOW); // enable lcd
-
-    //transfer_is_done = true;
 }
+
 /***************************************************************************************
 ** Function name:           spilcdGetTouchRaw
 ** Description:             read raw touch position.  Always returns true.
@@ -1673,10 +1672,10 @@ uint8_t spilcdGetTouchRaw(SPILCD *pLCD, uint16_t *x, uint16_t *y)
     #ifdef ARDUINO_ARCH_ESP32
         
         uint8_t pBuf[] = {0xd0,0x00,0x00,0x90,0x00,0x00};
+        uint8_t ucRxBuf[6]={0};
 
         #ifdef HAS_DMA
-            uint8_t rxdata[6]={0};
-
+        
             esp_err_t ret;
             
             static spi_transaction_t t;
@@ -1684,26 +1683,26 @@ uint8_t spilcdGetTouchRaw(SPILCD *pLCD, uint16_t *x, uint16_t *y)
             t.length = 6*8;  // length in bits
             t.tx_buffer = pBuf;
             t.rxlength = 6*8; // defaults to the same length as tx length
-            t.rx_buffer = rxdata;
+            t.rx_buffer = ucRxBuf;
 
             iCurrentCS = -1;
             
             ret = spi_device_polling_transmit(touchSPI, &t);  //Transmit!
 
-            tmp = rxdata[1] << 5;
-            tmp |= 0x1f & (rxdata[2] >> 3);
+            tmp = ucRxBuf[1] << 5;
+            tmp |= 0x1f & (ucRxBuf[2] >> 3);
 
             *x = tmp;
 
-            tmp = rxdata[4] << 5;
-            tmp |= 0x1f & (rxdata[5] >> 3);
+            tmp = ucRxBuf[4] << 5;
+            tmp |= 0x1f & (ucRxBuf[5] >> 3);
 
             *y = tmp;
 
             assert(ret==ESP_OK); //Should have had no issues.
 
         #else
-            uint8_t ucRxBuf[6];
+
             mySPI.transferBytes(pBuf, ucRxBuf, 6);
 
             tmp = ucRxBuf[1] << 5;
@@ -1715,6 +1714,7 @@ uint8_t spilcdGetTouchRaw(SPILCD *pLCD, uint16_t *x, uint16_t *y)
             tmp |= 0x1f & (ucRxBuf[5] >> 3);
 
             *y = tmp;
+
         #endif
     #else
         #ifdef ARDUINO_ARCH_RP2040
@@ -1784,23 +1784,24 @@ uint8_t spilcdGetTouchRaw(SPILCD *pLCD, uint16_t *x, uint16_t *y)
 }
 
 /***************************************************************************************
-** Function name:           getTouchRawZ
+** Function name:           spilcdGetTouchRawZ
 ** Description:             read raw pressure on touchpad and return Z value. 
 ***************************************************************************************/
 uint16_t spilcdGetTouchRawZ(SPILCD *pLCD)
 {
     begin_touch_read_write(pLCD);
 
+    uint16_t tmp;
+
     // Z sample request
     int16_t tz = 0xFFF;
-    uint16_t tmp;
 
     #ifdef ARDUINO_ARCH_ESP32
         
         uint8_t pBuf[] = {0xb0,0x00,0x00,0xc0,0x00,0x00};
+        uint8_t ucRxBuf[6]={0};
 
         #ifdef HAS_DMA
-            uint8_t rxdata[6]={0};
 
             esp_err_t ret;
             
@@ -1809,40 +1810,38 @@ uint16_t spilcdGetTouchRawZ(SPILCD *pLCD)
             t.length = 6*8;  // length in bits
             t.tx_buffer = pBuf;
             t.rxlength = 6*8; // defaults to the same length as tx length
-            t.rx_buffer = rxdata;
+            t.rx_buffer = ucRxBuf;
 
             iCurrentCS = -1;
             
             ret = spi_device_polling_transmit(touchSPI, &t);  //Transmit!
 
-            tmp = rxdata[1] << 5;
-            tmp |= 0x1f & (rxdata[2] >> 3);
-            //Serial.print("Z1 = ");Serial.println(tmp);
+            // Read Z1
+            tmp = ucRxBuf[1] << 5;
+            tmp |= 0x1f & (ucRxBuf[2] >> 3);
             tz += tmp;
 
-            tmp = rxdata[4] << 5;
-            tmp |= 0x1f & (rxdata[5] >> 3);
-            //Serial.print("Z2 = ");Serial.println(tmp);
+            // Read Z2
+            tmp = ucRxBuf[4] << 5;
+            tmp |= 0x1f & (ucRxBuf[5] >> 3);
             tz -= tmp;
-
-            /*Serial.print("rxdata[0] = ");Serial.println(rxdata[0]);
-            Serial.print("rxdata[1] = ");Serial.println(rxdata[1]);
-            Serial.print("rxdata[2] = ");Serial.println(rxdata[2]);
-            Serial.print("rxdata[3] = ");Serial.println(rxdata[3]);
-            Serial.print("rxdata[4] = ");Serial.println(rxdata[4]);
-            Serial.print("rxdata[5] = ");Serial.println(rxdata[5]);*/
-
-            //tz += rxdata[1] >> 3;  // Read Z1
-            //tz -= rxdata[3] >> 3;  // Read Z2
 
             assert(ret==ESP_OK); //Should have had no issues.
 
         #else
-            uint8_t ucRxBuf[4];
+
             mySPI.transferBytes(pBuf, ucRxBuf, 4);
 
-            tz += ucRxBuf[1] >> 3;  // Read Z1
-            tz -= ucRxBuf[3] >> 3;  // Read Z2
+            // Read Z1
+            tmp = ucRxBuf[1] << 5;
+            tmp |= 0x1f & (ucRxBuf[2] >> 3);
+            tz += tmp;
+
+            // Read Z2
+            tmp = ucRxBuf[4] << 5;
+            tmp |= 0x1f & (ucRxBuf[5] >> 3);
+            tz -= tmp;
+
         #endif
     #else
         #ifdef ARDUINO_ARCH_RP2040        
@@ -1864,7 +1863,7 @@ uint16_t spilcdGetTouchRawZ(SPILCD *pLCD)
 }
 
 /***************************************************************************************
-** Function name:           validTouch
+** Function name:           spilcdValidTouch
 ** Description:             read validated position. Return false if not pressed. 
 ***************************************************************************************/
 #define _RAWERR 20 // Deadband error allowed in successive position samples
@@ -1910,7 +1909,7 @@ uint8_t spilcdValidTouch(SPILCD *pLCD, uint16_t *x, uint16_t *y, uint16_t thresh
 }
 
 /***************************************************************************************
-** Function name:           convertRawXY
+** Function name:           spilcdConvertRawXY
 ** Description:             convert raw touch x,y values to screen coordinates 
 ***************************************************************************************/
 void spilcdConvertRawXY(SPILCD *pLCD, uint16_t *x, uint16_t *y)
@@ -1941,7 +1940,7 @@ void spilcdConvertRawXY(SPILCD *pLCD, uint16_t *x, uint16_t *y)
 }
 
 /***************************************************************************************
-** Function name:           getTouch
+** Function name:           spilcdGetTouch
 ** Description:             read callibrated position. Return false if not pressed. 
 ***************************************************************************************/
 #define Z_THRESHOLD 350 // Touch pressure threshold for validating touches
@@ -1996,7 +1995,7 @@ void spilcdSetTouch(SPILCD *pLCD, uint16_t *parameters)
 }
 
 /***************************************************************************************
-** Function name:           calibrateTouch
+** Function name:           spilcdCalibrateTouch
 ** Description:             generates calibration parameters for touchscreen. 
 ***************************************************************************************/
 void spilcdCalibrateTouch(SPILCD *pLCD, uint16_t *parameters, uint32_t color_fg, uint32_t color_bg, uint8_t size)
@@ -2111,19 +2110,22 @@ void spilcdCalibrateTouch(SPILCD *pLCD, uint16_t *parameters, uint32_t color_fg,
     }
 }
 
-//
-// Initialize the LCD Touch controller
-//
+/***************************************************************************************
+** Function name:           spilcdInitTouch
+** Description:             Initialize the LCD Touch controller. (must be run after spilcdInit)
+***************************************************************************************/
 int spilcdInitTouch(SPILCD *pLCD, int iCSPin, int32_t iSPIFreq)
 {
-    pLCD->touchEnabled = true;
     pLCD->iTCSPin = iCSPin;
     pLCD->iTSPISpeed = iSPIFreq;
 
-    if (pLCD->iTCSPin != -1)
+    if (pLCD->iLCDFlags & FLAGS_BITBANG)
     {
-        pinMode(pLCD->iTCSPin, OUTPUT);
-        myPinWrite(pLCD->iTCSPin, HIGH); // disable touch
+        if (pLCD->iTCSPin != -1)
+        {
+            pinMode(pLCD->iTCSPin, OUTPUT);
+            myPinWrite(pLCD->iTCSPin, HIGH);
+        }
     }
 
     #ifdef ESP32_DMA
@@ -2152,52 +2154,60 @@ int spilcdInitTouch(SPILCD *pLCD, int iCSPin, int32_t iSPIFreq)
 
     return 0;
 }
+#endif //TOUCH_CS
+
 //
 // Initialize the LCD controller and clear the display
 // LED pin is optional - pass as -1 to disable
 //
 int spilcdInit(SPILCD *pLCD, int iType, int iFlags, int32_t iSPIFreq, int iCS, int iDC, int iReset, int iLED, int iMISOPin, int iMOSIPin, int iCLKPin)
 {
-unsigned char *s, *d;
-int i, iCount;
+    unsigned char *s, *d;
+    int i, iCount;
    
     pLCD->iColStart = pLCD->iRowStart = pLCD->iMemoryX = pLCD->iMemoryY = 0;
     pLCD->iOrientation = 0;
     pLCD->iLCDType = iType;
     pLCD->iLCDFlags = iFlags;
-  if (pLCD->pfnResetCallback != NULL)
-  {
-     (*pLCD->pfnResetCallback)();
-     goto start_of_init;
-  }
-#ifndef ARDUINO_ARCH_ESP32
-    (void)iMISOPin;
-#endif
-#ifdef __AVR__
-{ // setup fast I/O
-  uint8_t port;
-    port = digitalPinToPort(iDC);
-    outDC = portOutputRegister(port);
-    bitDC = digitalPinToBitMask(iDC);
-    if (iCS != -1) {
-      port = digitalPinToPort(iCS);
-      outCS = portOutputRegister(port);
-      bitCS = digitalPinToBitMask(iCS);
+
+    if (pLCD->pfnResetCallback != NULL)
+    {
+        (*pLCD->pfnResetCallback)();
+        goto start_of_init;
     }
-}
-#endif
+
+    #ifndef ARDUINO_ARCH_ESP32
+        (void)iMISOPin;
+    #endif
+
+    #ifdef __AVR__
+    { // setup fast I/O
+        uint8_t port;
+        port = digitalPinToPort(iDC);
+        outDC = portOutputRegister(port);
+        bitDC = digitalPinToBitMask(iDC);
+        if (iCS != -1)
+        {
+            port = digitalPinToPort(iCS);
+            outCS = portOutputRegister(port);
+            bitCS = digitalPinToBitMask(iCS);
+        }
+    }
+    #endif
 
     pLCD->iLEDPin = -1; // assume it's not defined
+
 	if (iType <= LCD_INVALID || iType >= LCD_VALID_MAX)
 	{
-#ifndef _LINUX_
-		Serial.println("Unsupported display type\n");
-#endif // _LINUX_
-		return -1;
+        #ifndef _LINUX_
+            Serial.println("Unsupported display type\n");
+        #endif // _LINUX_
+            return -1;
 	}
-#ifndef _LINUX_
-    pLCD->iSPIMode = (iType == LCD_ST7789_NOCS || iType == LCD_ST7789) ? SPI_MODE3 : SPI_MODE0;
-#endif
+    #ifndef _LINUX_
+        pLCD->iSPIMode = (iType == LCD_ST7789_NOCS || iType == LCD_ST7789) ? SPI_MODE3 : SPI_MODE0;
+    #endif
+
     pLCD->iSPISpeed = iSPIFreq;
 	pLCD->iScrollOffset = 0; // current hardware scroll register value
 
@@ -2207,9 +2217,9 @@ int i, iCount;
     pLCD->iLEDPin = iLED;
 	if (pLCD->iDCPin == -1)
 	{
-#ifndef _LINUX_
-		Serial.println("One or more invalid GPIO pin numbers\n");
-#endif
+        #ifndef _LINUX_
+            Serial.println("One or more invalid GPIO pin numbers\n");
+        #endif
 		return -1;
 	}
     if (iFlags & FLAGS_BITBANG)
@@ -2218,81 +2228,87 @@ int i, iCount;
         pinMode(pLCD->iCLKPin, OUTPUT);
         goto skip_spi_init;
     }
-#ifdef ESP32_DMA
-    if (!iStarted) {
-    esp_err_t ret;
 
-        if (iMOSIPin == -1 || iMOSIPin == 0xff) {
-            // use the Arduino defaults
-            iMISOPin = MISO;
-            iMOSIPin = MOSI;
-            iCLKPin = SCK;
+    #ifdef ESP32_DMA
+        if (!iStarted)
+        {
+            esp_err_t ret;
+
+            if (iMOSIPin == -1 || iMOSIPin == 0xff) {
+                // use the Arduino defaults
+                iMISOPin = MISO;
+                iMOSIPin = MOSI;
+                iCLKPin = SCK;
+            }
+
+            memset(&buscfg, 0, sizeof(buscfg));
+            buscfg.miso_io_num = iMISOPin;
+            buscfg.mosi_io_num = iMOSIPin;
+            buscfg.sclk_io_num = iCLKPin;
+            buscfg.max_transfer_sz=240*9*2;
+            buscfg.quadwp_io_num=-1;
+            buscfg.quadhd_io_num=-1;
+            
+            //Initialize the SPI bus
+            ret=spi_bus_initialize(ESP32_SPI_HOST, &buscfg, SPI_DMA_CHAN);
+            assert(ret==ESP_OK);
+        
+            memset(&devcfg, 0, sizeof(devcfg));
+            devcfg.clock_speed_hz = iSPIFreq;
+            devcfg.mode = pLCD->iSPIMode;   //SPI mode 0 or 3
+            devcfg.spics_io_num = -1;   //CS pin, set to -1 to disable since we handle it outside of the master driver
+            devcfg.queue_size = 2;  //We want to be able to queue 2 transactions at a time
+            
+            // These callbacks currently don't do anything
+            devcfg.pre_cb = spi_pre_transfer_callback;  //Specify pre-transfer callback to handle D/C line
+            devcfg.post_cb = spi_post_transfer_callback;
+            devcfg.flags = SPI_DEVICE_NO_DUMMY; // allow speeds > 26Mhz
+            // devcfg.flags = SPI_DEVICE_HALFDUPLEX; // this disables SD card access
+
+            //Attach the LCD to the SPI bus
+            ret=spi_bus_add_device(ESP32_SPI_HOST, &devcfg, &spi);
+            assert(ret==ESP_OK);
+            memset(&trans[0], 0, sizeof(spi_transaction_t));
+            iStarted = 1; // don't re-initialize this code
         }
-    memset(&buscfg, 0, sizeof(buscfg));
-    buscfg.miso_io_num = iMISOPin;
-    buscfg.mosi_io_num = iMOSIPin;
-    buscfg.sclk_io_num = iCLKPin;
-    buscfg.max_transfer_sz=240*9*2;
-    buscfg.quadwp_io_num=-1;
-    buscfg.quadhd_io_num=-1;
-    //Initialize the SPI bus
-    ret=spi_bus_initialize(ESP32_SPI_HOST, &buscfg, SPI_DMA_CHAN);
-    assert(ret==ESP_OK);
-    
-    memset(&devcfg, 0, sizeof(devcfg));
-    devcfg.clock_speed_hz = iSPIFreq;
-    devcfg.mode = pLCD->iSPIMode;                         //SPI mode 0 or 3
-    devcfg.spics_io_num = -1;               //CS pin, set to -1 to disable since we handle it outside of the master driver
-    devcfg.queue_size = 2;                          //We want to be able to queue 2 transactions at a time
-// These callbacks currently don't do anything
-    devcfg.pre_cb = spi_pre_transfer_callback;  //Specify pre-transfer callback to handle D/C line
-    devcfg.post_cb = spi_post_transfer_callback;
-    devcfg.flags = SPI_DEVICE_NO_DUMMY; // allow speeds > 26Mhz
-//    devcfg.flags = SPI_DEVICE_HALFDUPLEX; // this disables SD card access
-    //Attach the LCD to the SPI bus
-    ret=spi_bus_add_device(ESP32_SPI_HOST, &devcfg, &spi);
-    assert(ret==ESP_OK);
-    memset(&trans[0], 0, sizeof(spi_transaction_t));
-        iStarted = 1; // don't re-initialize this code
-    }
-#else
-    #if defined( ARDUINO_ARCH_ESP32 ) || defined( RISCV )
-        if (iMISOPin != iMOSIPin)
-            mySPI.begin(iCLKPin, iMISOPin, iMOSIPin, iCS);
-        else
-            mySPI.begin();
     #else
-        #ifdef _LINUX_
-            iHandle = AIOOpenSPI(0, iSPIFreq); // DEBUG - open SPI channel 0 
+        #if defined( ARDUINO_ARCH_ESP32 ) || defined( RISCV )
+            if (iMISOPin != iMOSIPin)
+                mySPI.begin(iCLKPin, iMISOPin, iMOSIPin, iCS);
+            else
+                mySPI.begin();
         #else
-            #ifdef ARDUINO_ARCH_RP2040
-                pSPI->begin();
+            #ifdef _LINUX_
+                iHandle = AIOOpenSPI(0, iSPIFreq); // DEBUG - open SPI channel 0 
             #else
-                mySPI.begin(); // simple Arduino init (e.g. AVR)
-            #endif
-            #ifdef ARDUINO_SAMD_ZERO
+                #ifdef ARDUINO_ARCH_RP2040
+                    pSPI->begin();
+                #else
+                    mySPI.begin(); // simple Arduino init (e.g. AVR)
+                #endif
+                #ifdef ARDUINO_SAMD_ZERO
 
-            myDMA.setTrigger(mySPI.getDMAC_ID_TX());
-            myDMA.setAction(DMA_TRIGGER_ACTON_BEAT);
+                myDMA.setTrigger(mySPI.getDMAC_ID_TX());
+                myDMA.setAction(DMA_TRIGGER_ACTON_BEAT);
 
-            stat = myDMA.allocate();
-            desc = myDMA.addDescriptor(
-                ucTXBuf,                    // move data from here
-                (void *)(mySPI.getDataRegister()),
-                100,                      // this many...
-                DMA_BEAT_SIZE_BYTE,               // bytes/hword/words
-                true,                             // increment source addr?
-                false);                           // increment dest addr?
+                stat = myDMA.allocate();
+                desc = myDMA.addDescriptor(
+                    ucTXBuf,                    // move data from here
+                    (void *)(mySPI.getDataRegister()),
+                    100,                      // this many...
+                    DMA_BEAT_SIZE_BYTE,               // bytes/hword/words
+                    true,                             // increment source addr?
+                    false);                           // increment dest addr?
 
-            myDMA.setCallback(dma_callback);
-            #endif // ARDUINO_SAMD_ZERO
+                myDMA.setCallback(dma_callback);
+                #endif // ARDUINO_SAMD_ZERO
 
-        #endif // _LINUX_
+            #endif // _LINUX_
+        #endif
     #endif
-#endif
-//
-// Start here if bit bang enabled
-//
+    //
+    // Start here if bit bang enabled
+    //
     skip_spi_init:
     if (pLCD->iCSPin != -1)
     {
@@ -3539,30 +3555,30 @@ static void spi_post_transfer_callback(spi_transaction_t *t)
 #endif
 
 #ifdef ARDUINO_SAMD_ZERO
-// Callback for end-of-DMA-transfer
-void dma_callback(Adafruit_ZeroDMA *dma) {
-//    SPILCD *pLCD = (SPILCD*)dma; // not needed
-    transfer_is_done = true;
-    myPinWrite(iCurrentCS, 1);
-    iCurrentCS = -1;
-//    myPinWrite(pLCD->iCSPin, 1);
-}
+    // Callback for end-of-DMA-transfer
+    void dma_callback(Adafruit_ZeroDMA *dma)
+    {
+        transfer_is_done = true;
+        myPinWrite(iCurrentCS, 1);
+        iCurrentCS = -1;
+    }
 #endif // ARDUINO_SAMD_ZERO
 
 // wait for previous transaction to complete
 void spilcdWaitDMA(void)
 {
-//Serial.println("spilcdWaitDMA");
+    #ifdef HAS_DMA
+        while (!transfer_is_done);
+        myPinWrite(iCurrentCS, 1);
+        iCurrentCS = -1;
 
-#ifdef HAS_DMA
-    while (!transfer_is_done);
-    myPinWrite(iCurrentCS, 1);
-    iCurrentCS = -1;
-#ifdef ARDUINO_SAMD_ZERO
-    mySPI.endTransaction();
-#endif // ARDUINO_SAMD_ZERO
-#endif // HAS_DMA
+        #ifdef ARDUINO_SAMD_ZERO
+            mySPI.endTransaction();
+        #endif // ARDUINO_SAMD_ZERO
+
+    #endif // HAS_DMA
 }
+
 // Queue a new transaction for the SPI DMA
 void spilcdWriteDataDMA(SPILCD *pLCD, int iLen)
 {
