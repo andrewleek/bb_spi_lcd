@@ -107,14 +107,14 @@ MbedSPI *pSPI = new MbedSPI(12,11,13);
 #include <bb_spi_lcd.h>
 
 #if defined( ARDUINO_ARCH_ESP32 ) // && !defined( ARDUINO_ESP32C3_DEV )
-#ifdef VSPI_HOST
-#define ESP32_SPI_HOST VSPI_HOST
-#else
-#define ESP32_SPI_HOST SPI2_HOST
-#endif // VSPI_HOST
-#define ESP32_DMA
-#define HAS_DMA
-#define SPI_DMA_CHAN SPI_DMA_CH_AUTO
+    #ifdef VSPI_HOST
+        #define ESP32_SPI_HOST VSPI_HOST
+    #else
+        #define ESP32_SPI_HOST SPI2_HOST
+    #endif // VSPI_HOST
+    #define ESP32_DMA
+    #define HAS_DMA
+    #define SPI_DMA_CHAN SPI_DMA_CH_AUTO
 #endif
 
 volatile int iCurrentCS;
@@ -123,8 +123,10 @@ volatile int iCurrentCS;
 #include "driver/spi_master.h"
 static void spi_pre_transfer_callback(spi_transaction_t *t);
 static spi_device_interface_config_t devcfg;
+static spi_device_interface_config_t touchdevcfg;
 static spi_bus_config_t buscfg;
 static int iStarted = 0; // indicates if the master driver has already been initialized
+static int iTouchStarted = 0; // indicates if the master driver has already been initialized
 static void spi_post_transfer_callback(spi_transaction_t *t);
 // ODROID-GO
 //const gpio_num_t SPI_PIN_NUM_MISO = GPIO_NUM_19;
@@ -136,6 +138,7 @@ static void spi_post_transfer_callback(spi_transaction_t *t);
 //const gpio_num_t SPI_PIN_NUM_CLK  = GPIO_NUM_13;
 static spi_transaction_t trans[2];
 static spi_device_handle_t spi;
+static spi_device_handle_t touchSPI;
 //static TaskHandle_t xTaskToNotify = NULL;
 // ESP32 has enough memory to spare 4K
 DMA_ATTR uint8_t ucTXBuf[4096]="";
@@ -1595,6 +1598,560 @@ void spilcdSetCallbacks(SPILCD *pLCD, RESETCALLBACK pfnReset, DATACALLBACK pfnDa
     pLCD->pfnDataCallback = pfnData;
     pLCD->pfnResetCallback = pfnReset;
 }
+/***************************************************************************************
+** Function name:           begin_touch_read_write - was spi_begin_touch
+** Description:             Start transaction and select touch controller
+***************************************************************************************/
+// The touch controller has a low SPI clock rate
+inline void begin_touch_read_write(SPILCD *pLCD)
+{
+    #ifdef HAS_DMA
+        spilcdWaitDMA(); // wait for any previous transaction to finish
+    #endif
+
+    //if(transfer_is_done)
+    //{
+    //    transfer_is_done = false;
+
+        myPinWrite(pLCD->iCSPin, HIGH); // disable lcd
+
+        #ifdef ARDUINO_ARCH_RP2040
+            #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS)
+                pSPI->beginTransaction(SPISettings(pLCD->iTSPISpeed, MSBFIRST, pLCD->iSPIMode));
+            #else
+                pSPI->setFrequency(pLCD->iTSPISpeed);
+            #endif
+        #else
+            #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS)
+                mySPI.beginTransaction(SPISettings(pLCD->iTSPISpeed, MSBFIRST, pLCD->iSPIMode));
+            #else
+                mySPI.setFrequency(pLCD->iTSPISpeed);
+            #endif
+        #endif
+
+        myPinWrite(pLCD->iTCSPin, LOW); // enable touch
+    //}
+}
+/***************************************************************************************
+** Function name:           end_touch_read_write - was spi_end_touch
+** Description:             End transaction and deselect touch controller
+***************************************************************************************/
+inline void end_touch_read_write(SPILCD *pLCD)
+{
+    myPinWrite(pLCD->iTCSPin, HIGH); // disable touch
+
+    //Serial.print("end_touch_read_write");
+
+    #ifdef ARDUINO_ARCH_RP2040
+        #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS)
+            pSPI->endTransaction();
+        #else
+            pSPI->setFrequency(pLCD->iSPISpeed);
+        #endif
+    #else
+        #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS)
+            mySPI.endTransaction();
+        #else
+            mySPI.setFrequency(pLCD->iSPISpeed);
+        #endif
+    #endif
+
+    //myPinWrite(pLCD->iCSPin, LOW); // enable lcd
+
+    //transfer_is_done = true;
+}
+/***************************************************************************************
+** Function name:           spilcdGetTouchRaw
+** Description:             read raw touch position.  Always returns true.
+***************************************************************************************/
+uint8_t spilcdGetTouchRaw(SPILCD *pLCD, uint16_t *x, uint16_t *y)
+{
+    uint16_t tmp;
+
+    begin_touch_read_write(pLCD);
+
+    #ifdef ARDUINO_ARCH_ESP32
+        
+        uint8_t pBuf[] = {0xd0,0x00,0x00,0x90,0x00,0x00};
+
+        #ifdef HAS_DMA
+            uint8_t rxdata[6]={0};
+
+            esp_err_t ret;
+            
+            static spi_transaction_t t;
+            memset(&t, 0, sizeof(t));   //Zero out the transaction
+            t.length = 6*8;  // length in bits
+            t.tx_buffer = pBuf;
+            t.rxlength = 6*8; // defaults to the same length as tx length
+            t.rx_buffer = rxdata;
+
+            iCurrentCS = -1;
+            
+            ret = spi_device_polling_transmit(touchSPI, &t);  //Transmit!
+
+            tmp = rxdata[1] << 5;
+            tmp |= 0x1f & (rxdata[2] >> 3);
+
+            *x = tmp;
+
+            tmp = rxdata[4] << 5;
+            tmp |= 0x1f & (rxdata[5] >> 3);
+
+            *y = tmp;
+
+            assert(ret==ESP_OK); //Should have had no issues.
+
+        #else
+            uint8_t ucRxBuf[6];
+            mySPI.transferBytes(pBuf, ucRxBuf, 6);
+
+            tmp = ucRxBuf[1] << 5;
+            tmp |= 0x1f & (ucRxBuf[2] >> 3);
+
+            *x = tmp;
+
+            tmp = ucRxBuf[4] << 5;
+            tmp |= 0x1f & (ucRxBuf[5] >> 3);
+
+            *y = tmp;
+        #endif
+    #else
+        #ifdef ARDUINO_ARCH_RP2040
+            // Start YP sample request for x position, read 4 times and keep last sample
+            pSPI->transfer(0xd0);                    // Start new YP conversion
+            pSPI->transfer(0);                       // Read first 8 bits
+            pSPI->transfer(0xd0);                    // Read last 8 bits and start new YP conversion
+            pSPI->transfer(0);                       // Read first 8 bits
+            pSPI->transfer(0xd0);                    // Read last 8 bits and start new YP conversion
+            pSPI->transfer(0);                       // Read first 8 bits
+            pSPI->transfer(0xd0);                    // Read last 8 bits and start new YP conversion
+
+            tmp = pSPI->transfer(0);                   // Read first 8 bits
+            tmp = tmp <<5;
+            tmp |= 0x1f & (pSPI->transfer(0x90)>>3);   // Read last 8 bits and start new XP conversion
+
+            *x = tmp;
+
+            // Start XP sample request for y position, read 4 times and keep last sample
+            pSPI->transfer(0);                       // Read first 8 bits
+            pSPI->transfer(0x90);                    // Read last 8 bits and start new XP conversion
+            pSPI->transfer(0);                       // Read first 8 bits
+            pSPI->transfer(0x90);                    // Read last 8 bits and start new XP conversion
+            pSPI->transfer(0);                       // Read first 8 bits
+            pSPI->transfer(0x90);                    // Read last 8 bits and start new XP conversion
+
+            tmp = pSPI->transfer(0);                 // Read first 8 bits
+            tmp = tmp <<5;
+            tmp |= 0x1f & (pSPI->transfer(0)>>3);    // Read last 8 bits
+
+            *y = tmp;
+        #else
+            // Start YP sample request for x position, read 4 times and keep last sample
+            mySPI.transfer(0xd0);                    // Start new YP conversion
+            mySPI.transfer(0);                       // Read first 8 bits
+            mySPI.transfer(0xd0);                    // Read last 8 bits and start new YP conversion
+            mySPI.transfer(0);                       // Read first 8 bits
+            mySPI.transfer(0xd0);                    // Read last 8 bits and start new YP conversion
+            mySPI.transfer(0);                       // Read first 8 bits
+            mySPI.transfer(0xd0);                    // Read last 8 bits and start new YP conversion
+
+            tmp = mySPI.transfer(0);                   // Read first 8 bits
+            tmp = tmp <<5;
+            tmp |= 0x1f & (mySPI.transfer(0x90)>>3);   // Read last 8 bits and start new XP conversion
+
+            *x = tmp;
+
+            // Start XP sample request for y position, read 4 times and keep last sample
+            mySPI.transfer(0);                       // Read first 8 bits
+            mySPI.transfer(0x90);                    // Read last 8 bits and start new XP conversion
+            mySPI.transfer(0);                       // Read first 8 bits
+            mySPI.transfer(0x90);                    // Read last 8 bits and start new XP conversion
+            mySPI.transfer(0);                       // Read first 8 bits
+            mySPI.transfer(0x90);                    // Read last 8 bits and start new XP conversion
+
+            tmp = mySPI.transfer(0);                 // Read first 8 bits
+            tmp = tmp <<5;
+            tmp |= 0x1f & (mySPI.transfer(0)>>3);    // Read last 8 bits
+
+            *y = tmp;
+        #endif // RP2040
+    #endif
+
+    end_touch_read_write(pLCD);
+
+    return true;
+}
+
+/***************************************************************************************
+** Function name:           getTouchRawZ
+** Description:             read raw pressure on touchpad and return Z value. 
+***************************************************************************************/
+uint16_t spilcdGetTouchRawZ(SPILCD *pLCD)
+{
+    begin_touch_read_write(pLCD);
+
+    // Z sample request
+    int16_t tz = 0xFFF;
+    uint16_t tmp;
+
+    #ifdef ARDUINO_ARCH_ESP32
+        
+        uint8_t pBuf[] = {0xb0,0x00,0x00,0xc0,0x00,0x00};
+
+        #ifdef HAS_DMA
+            uint8_t rxdata[6]={0};
+
+            esp_err_t ret;
+            
+            static spi_transaction_t t;
+            memset(&t, 0, sizeof(t));   //Zero out the transaction
+            t.length = 6*8;  // length in bits
+            t.tx_buffer = pBuf;
+            t.rxlength = 6*8; // defaults to the same length as tx length
+            t.rx_buffer = rxdata;
+
+            iCurrentCS = -1;
+            
+            ret = spi_device_polling_transmit(touchSPI, &t);  //Transmit!
+
+            tmp = rxdata[1] << 5;
+            tmp |= 0x1f & (rxdata[2] >> 3);
+            //Serial.print("Z1 = ");Serial.println(tmp);
+            tz += tmp;
+
+            tmp = rxdata[4] << 5;
+            tmp |= 0x1f & (rxdata[5] >> 3);
+            //Serial.print("Z2 = ");Serial.println(tmp);
+            tz -= tmp;
+
+            /*Serial.print("rxdata[0] = ");Serial.println(rxdata[0]);
+            Serial.print("rxdata[1] = ");Serial.println(rxdata[1]);
+            Serial.print("rxdata[2] = ");Serial.println(rxdata[2]);
+            Serial.print("rxdata[3] = ");Serial.println(rxdata[3]);
+            Serial.print("rxdata[4] = ");Serial.println(rxdata[4]);
+            Serial.print("rxdata[5] = ");Serial.println(rxdata[5]);*/
+
+            //tz += rxdata[1] >> 3;  // Read Z1
+            //tz -= rxdata[3] >> 3;  // Read Z2
+
+            assert(ret==ESP_OK); //Should have had no issues.
+
+        #else
+            uint8_t ucRxBuf[4];
+            mySPI.transferBytes(pBuf, ucRxBuf, 4);
+
+            tz += ucRxBuf[1] >> 3;  // Read Z1
+            tz -= ucRxBuf[3] >> 3;  // Read Z2
+        #endif
+    #else
+        #ifdef ARDUINO_ARCH_RP2040        
+            pSPI->transfer(0xb0);               // Start new Z1 conversion
+            tz += pSPI->transfer16(0xc0) >> 3;  // Read Z1 and start Z2 conversion
+            tz -= pSPI->transfer16(0x00) >> 3;  // Read Z2
+        #else
+            mySPI.transfer(0xb0);               // Start new Z1 conversion
+            tz += mySPI.transfer16(0xc0) >> 3;  // Read Z1 and start Z2 conversion
+            tz -= mySPI.transfer16(0x00) >> 3;  // Read Z2     
+        #endif // RP2040
+    #endif
+
+    end_touch_read_write(pLCD);
+
+    if (tz == 4095) tz = 0;
+
+    return (uint16_t)tz;
+}
+
+/***************************************************************************************
+** Function name:           validTouch
+** Description:             read validated position. Return false if not pressed. 
+***************************************************************************************/
+#define _RAWERR 20 // Deadband error allowed in successive position samples
+uint8_t spilcdValidTouch(SPILCD *pLCD, uint16_t *x, uint16_t *y, uint16_t threshold)
+{
+    uint16_t x_tmp, y_tmp, x_tmp2, y_tmp2;
+
+    // Wait until pressure stops increasing to debounce pressure
+    uint16_t z1 = 1;
+    uint16_t z2 = 0;
+    while (z1 > z2)
+    {
+        z2 = z1;
+        z1 = spilcdGetTouchRawZ(pLCD);
+        delay(1);
+    }
+
+    //Serial.print("Z = ");Serial.println(z1);
+
+    if (z1 <= threshold) return false;
+
+    spilcdGetTouchRaw(pLCD,&x_tmp,&y_tmp);
+
+    Serial.print("Sample 1 x,y = "); Serial.print(x_tmp);Serial.print(",");Serial.print(y_tmp);
+    Serial.print(", Z = ");Serial.println(z1);
+
+    delay(1); // Small delay to the next sample
+    if (spilcdGetTouchRawZ(pLCD) <= threshold) return false;
+
+    delay(2); // Small delay to the next sample
+    spilcdGetTouchRaw(pLCD,&x_tmp2,&y_tmp2);
+
+    //  Serial.print("Sample 2 x,y = "); Serial.print(x_tmp2);Serial.print(",");Serial.println(y_tmp2);
+    //  Serial.print("Sample difference = ");Serial.print(abs(x_tmp - x_tmp2));Serial.print(",");Serial.println(abs(y_tmp - y_tmp2));
+
+    if (abs(x_tmp - x_tmp2) > _RAWERR) return false;
+    if (abs(y_tmp - y_tmp2) > _RAWERR) return false;
+
+    *x = x_tmp;
+    *y = y_tmp;
+
+    return true;
+}
+
+/***************************************************************************************
+** Function name:           convertRawXY
+** Description:             convert raw touch x,y values to screen coordinates 
+***************************************************************************************/
+void spilcdConvertRawXY(SPILCD *pLCD, uint16_t *x, uint16_t *y)
+{
+    uint16_t x_tmp = *x, y_tmp = *y, xx, yy;
+
+    if(!pLCD->touchCalibration_rotate)
+    {
+        xx=(x_tmp-pLCD->touchCalibration_x0)*pLCD->iCurrentWidth/pLCD->touchCalibration_x1;
+        yy=(y_tmp-pLCD->touchCalibration_y0)*pLCD->iCurrentHeight/pLCD->touchCalibration_y1;
+        if(pLCD->touchCalibration_invert_x)
+            xx = pLCD->iCurrentWidth - xx;
+        if(pLCD->touchCalibration_invert_y)
+            yy = pLCD->iCurrentHeight - yy;
+    }
+    else
+    {
+        xx=(y_tmp-pLCD->touchCalibration_x0)*pLCD->iCurrentWidth/pLCD->touchCalibration_x1;
+        yy=(x_tmp-pLCD->touchCalibration_y0)*pLCD->iCurrentHeight/pLCD->touchCalibration_y1;
+        if(pLCD->touchCalibration_invert_x)
+            xx = pLCD->iCurrentWidth - xx;
+        if(pLCD->touchCalibration_invert_y)
+            yy = pLCD->iCurrentHeight - yy;
+    }
+
+    *x = xx;
+    *y = yy;
+}
+
+/***************************************************************************************
+** Function name:           getTouch
+** Description:             read callibrated position. Return false if not pressed. 
+***************************************************************************************/
+#define Z_THRESHOLD 350 // Touch pressure threshold for validating touches
+uint8_t spilcdGetTouch(SPILCD *pLCD, uint16_t *x, uint16_t *y, uint16_t threshold)
+{
+    uint16_t x_tmp, y_tmp;
+
+    if (threshold<20) threshold = 20;
+    if (pLCD->pressTime > millis()) threshold=20;
+
+    uint8_t n = 5;
+    uint8_t valid = 0;
+    while (n--)
+    {
+        if (spilcdValidTouch(pLCD, &x_tmp, &y_tmp, threshold)) valid++;;
+    }
+
+    if (valid<1) { pLCD->pressTime = 0; return false; }
+
+    pLCD->pressTime = millis() + 50;
+
+    spilcdConvertRawXY(pLCD, &x_tmp, &y_tmp);
+
+    if (x_tmp >= pLCD->iCurrentWidth || y_tmp >= pLCD->iCurrentHeight) return false;
+
+    pLCD->pressX = x_tmp;
+    pLCD->pressY = y_tmp;
+    *x = pLCD->pressX;
+    *y = pLCD->pressY;
+    return valid;
+}
+
+/***************************************************************************************
+** Function name:           spilcdSetTouch
+** Description:             imports calibration parameters for touchscreen. 
+***************************************************************************************/
+void spilcdSetTouch(SPILCD *pLCD, uint16_t *parameters)
+{
+    pLCD->touchCalibration_x0 = parameters[0];
+    pLCD->touchCalibration_x1 = parameters[1];
+    pLCD->touchCalibration_y0 = parameters[2];
+    pLCD->touchCalibration_y1 = parameters[3];
+
+    if(pLCD->touchCalibration_x0 == 0) pLCD->touchCalibration_x0 = 1;
+    if(pLCD->touchCalibration_x1 == 0) pLCD->touchCalibration_x1 = 1;
+    if(pLCD->touchCalibration_y0 == 0) pLCD->touchCalibration_y0 = 1;
+    if(pLCD->touchCalibration_y1 == 0) pLCD->touchCalibration_y1 = 1;
+
+    pLCD->touchCalibration_rotate = parameters[4] & 0x01;
+    pLCD->touchCalibration_invert_x = parameters[4] & 0x02;
+    pLCD->touchCalibration_invert_y = parameters[4] & 0x04;
+}
+
+/***************************************************************************************
+** Function name:           calibrateTouch
+** Description:             generates calibration parameters for touchscreen. 
+***************************************************************************************/
+void spilcdCalibrateTouch(SPILCD *pLCD, uint16_t *parameters, uint32_t color_fg, uint32_t color_bg, uint8_t size)
+{
+    int16_t values[] = {0,0,0,0,0,0,0,0};
+    uint16_t x_tmp, y_tmp;
+
+	spilcdFill(pLCD, TFT_WHITE, DRAW_TO_LCD); // erase display to white
+
+    for(uint8_t i = 0; i<4; i++)
+    {
+        spilcdRectangle(pLCD, 0, 0, size+1, size+1, color_bg, color_bg, 1, DRAW_TO_LCD | DRAW_TO_RAM);
+        spilcdRectangle(pLCD, 0, pLCD->iCurrentHeight-size-1, size+1, size+1, color_bg, color_bg, 1, DRAW_TO_LCD | DRAW_TO_RAM);
+        spilcdRectangle(pLCD, pLCD->iCurrentWidth-size-1, 0, size+1, size+1, color_bg, color_bg, 1, DRAW_TO_LCD | DRAW_TO_RAM);
+        spilcdRectangle(pLCD, pLCD->iCurrentWidth-size-1, pLCD->iCurrentHeight-size-1, size+1, size+1, color_bg, color_bg, 1, DRAW_TO_LCD | DRAW_TO_RAM);
+
+        if (i == 5) break; // used to clear the arrows
+        
+        switch (i) {
+        case 0: // up left
+            spilcdDrawLine(pLCD, 0, 0, 0, size, color_fg, DRAW_TO_LCD | DRAW_TO_RAM);
+            spilcdDrawLine(pLCD, 0, 0, size, 0, color_fg, DRAW_TO_LCD | DRAW_TO_RAM);
+            spilcdDrawLine(pLCD, 0, 0, size , size, color_fg, DRAW_TO_LCD | DRAW_TO_RAM);
+            break;
+        case 1: // bot left
+            spilcdDrawLine(pLCD, 0, pLCD->iCurrentHeight-size-1, 0, pLCD->iCurrentHeight-1, color_fg, DRAW_TO_LCD | DRAW_TO_RAM);
+            spilcdDrawLine(pLCD, 0, pLCD->iCurrentHeight-1, size, pLCD->iCurrentHeight-1, color_fg, DRAW_TO_LCD | DRAW_TO_RAM);
+            spilcdDrawLine(pLCD, size, pLCD->iCurrentHeight-size-1, 0, pLCD->iCurrentHeight-1 , color_fg, DRAW_TO_LCD | DRAW_TO_RAM);
+            break;
+        case 2: // up right
+            spilcdDrawLine(pLCD, pLCD->iCurrentWidth-size-1, 0, pLCD->iCurrentWidth-1, 0, color_fg, DRAW_TO_LCD | DRAW_TO_RAM);
+            spilcdDrawLine(pLCD, pLCD->iCurrentWidth-size-1, size, pLCD->iCurrentWidth-1, 0, color_fg, DRAW_TO_LCD | DRAW_TO_RAM);
+            spilcdDrawLine(pLCD, pLCD->iCurrentWidth-1, size, pLCD->iCurrentWidth-1, 0, color_fg, DRAW_TO_LCD | DRAW_TO_RAM);
+            break;
+        case 3: // bot right
+            spilcdDrawLine(pLCD, pLCD->iCurrentWidth-size-1, pLCD->iCurrentHeight-size-1, pLCD->iCurrentWidth-1, pLCD->iCurrentHeight-1, color_fg, DRAW_TO_LCD | DRAW_TO_RAM);
+            spilcdDrawLine(pLCD, pLCD->iCurrentWidth-1, pLCD->iCurrentHeight-1-size, pLCD->iCurrentWidth-1, pLCD->iCurrentHeight-1, color_fg, DRAW_TO_LCD | DRAW_TO_RAM);
+            spilcdDrawLine(pLCD, pLCD->iCurrentWidth-1-size, pLCD->iCurrentHeight-1, pLCD->iCurrentWidth-1, pLCD->iCurrentHeight-1, color_fg, DRAW_TO_LCD | DRAW_TO_RAM);
+            break;
+        }
+
+        // user has to get the chance to release
+        if(i>0) delay(1000);
+
+        for(uint8_t j= 0; j<8; j++)
+        {
+            // Use a lower detect threshold as corners tend to be less sensitive
+            while(!spilcdValidTouch(pLCD, &x_tmp, &y_tmp, Z_THRESHOLD/2));
+            values[i*2  ] += x_tmp;
+            values[i*2+1] += y_tmp;
+        }
+
+        values[i*2  ] /= 8;
+        values[i*2+1] /= 8;
+    }
+
+    // from case 0 to case 1, the y value changed. 
+    // If the measured delta of the touch x axis is bigger than the delta of the y axis, the touch and TFT axes are switched.
+    pLCD->touchCalibration_rotate = false;
+    if(abs(values[0]-values[2]) > abs(values[1]-values[3]))
+    {
+        pLCD->touchCalibration_rotate = true;
+        pLCD->touchCalibration_x0 = (values[1] + values[3])/2; // calc min x
+        pLCD->touchCalibration_x1 = (values[5] + values[7])/2; // calc max x
+        pLCD->touchCalibration_y0 = (values[0] + values[4])/2; // calc min y
+        pLCD->touchCalibration_y1 = (values[2] + values[6])/2; // calc max y
+    }
+    else
+    {
+        pLCD->touchCalibration_x0 = (values[0] + values[2])/2; // calc min x
+        pLCD->touchCalibration_x1 = (values[4] + values[6])/2; // calc max x
+        pLCD->touchCalibration_y0 = (values[1] + values[5])/2; // calc min y
+        pLCD->touchCalibration_y1 = (values[3] + values[7])/2; // calc max y
+    }
+
+    // in addition, the touch screen axis could be in the opposite direction of the TFT axis
+    pLCD->touchCalibration_invert_x = false;
+    if(pLCD->touchCalibration_x0 > pLCD->touchCalibration_x1)
+    {
+        values[0]=pLCD->touchCalibration_x0;
+        pLCD->touchCalibration_x0 = pLCD->touchCalibration_x1;
+        pLCD->touchCalibration_x1 = values[0];
+        pLCD->touchCalibration_invert_x = true;
+    }
+
+    pLCD->touchCalibration_invert_y = false;
+    if(pLCD->touchCalibration_y0 > pLCD->touchCalibration_y1)
+    {
+        values[0]=pLCD->touchCalibration_y0;
+        pLCD->touchCalibration_y0 = pLCD->touchCalibration_y1;
+        pLCD->touchCalibration_y1 = values[0];
+        pLCD->touchCalibration_invert_y = true;
+    }
+
+    // pre calculate
+    pLCD->touchCalibration_x1 -= pLCD->touchCalibration_x0;
+    pLCD->touchCalibration_y1 -= pLCD->touchCalibration_y0;
+
+    if(pLCD->touchCalibration_x0 == 0) pLCD->touchCalibration_x0 = 1;
+    if(pLCD->touchCalibration_x1 == 0) pLCD->touchCalibration_x1 = 1;
+    if(pLCD->touchCalibration_y0 == 0) pLCD->touchCalibration_y0 = 1;
+    if(pLCD->touchCalibration_y1 == 0) pLCD->touchCalibration_y1 = 1;
+
+    // export parameters, if pointer valid
+    if(parameters != NULL)
+    {
+        parameters[0] = pLCD->touchCalibration_x0;
+        parameters[1] = pLCD->touchCalibration_x1;
+        parameters[2] = pLCD->touchCalibration_y0;
+        parameters[3] = pLCD->touchCalibration_y1;
+        parameters[4] = pLCD->touchCalibration_rotate | (pLCD->touchCalibration_invert_x <<1) | (pLCD->touchCalibration_invert_y <<2);
+    }
+}
+
+//
+// Initialize the LCD Touch controller
+//
+int spilcdInitTouch(SPILCD *pLCD, int iCSPin, int32_t iSPIFreq)
+{
+    pLCD->touchEnabled = true;
+    pLCD->iTCSPin = iCSPin;
+    pLCD->iTSPISpeed = iSPIFreq;
+
+    if (pLCD->iTCSPin != -1)
+    {
+        pinMode(pLCD->iTCSPin, OUTPUT);
+        myPinWrite(pLCD->iTCSPin, HIGH); // disable touch
+    }
+
+    #ifdef ESP32_DMA
+        if (!iTouchStarted)
+        {
+            esp_err_t ret;        
+            
+            memset(&touchdevcfg, 0, sizeof(touchdevcfg));
+            touchdevcfg.clock_speed_hz = iSPIFreq;
+            touchdevcfg.mode = pLCD->iSPIMode;  // SPI mode 0 or 3
+            touchdevcfg.spics_io_num = -1;  // CS pin, set to -1 to disable since we handle it outside of the master driver
+            touchdevcfg.queue_size = 2; // We want to be able to queue 2 transactions at a time
+            
+            // These callbacks currently don't do anything
+            touchdevcfg.pre_cb = spi_pre_transfer_callback; // Specify pre-transfer callback to handle D/C line
+            touchdevcfg.post_cb = spi_post_transfer_callback;
+            touchdevcfg.flags = SPI_DEVICE_NO_DUMMY; // allow speeds > 26Mhz
+            
+            // Attach the LCD to the SPI bus
+            ret = spi_bus_add_device(ESP32_SPI_HOST, &touchdevcfg, &touchSPI);
+            assert(ret==ESP_OK);
+
+            iTouchStarted = 1; // don't re-initialize this code
+        }
+    #endif
+
+    return 0;
+}
 //
 // Initialize the LCD controller and clear the display
 // LED pin is optional - pass as -1 to disable
@@ -1699,39 +2256,39 @@ int i, iCount;
         iStarted = 1; // don't re-initialize this code
     }
 #else
-#if defined( ARDUINO_ARCH_ESP32 ) || defined( RISCV )
-if (iMISOPin != iMOSIPin)
-    mySPI.begin(iCLKPin, iMISOPin, iMOSIPin, iCS);
-else
-    mySPI.begin();
-#else
-#ifdef _LINUX_
-    iHandle = AIOOpenSPI(0, iSPIFreq); // DEBUG - open SPI channel 0 
-#else
-#ifdef ARDUINO_ARCH_RP2040
-  pSPI->begin();
-#else
-  mySPI.begin(); // simple Arduino init (e.g. AVR)
-#endif
-#ifdef ARDUINO_SAMD_ZERO
+    #if defined( ARDUINO_ARCH_ESP32 ) || defined( RISCV )
+        if (iMISOPin != iMOSIPin)
+            mySPI.begin(iCLKPin, iMISOPin, iMOSIPin, iCS);
+        else
+            mySPI.begin();
+    #else
+        #ifdef _LINUX_
+            iHandle = AIOOpenSPI(0, iSPIFreq); // DEBUG - open SPI channel 0 
+        #else
+            #ifdef ARDUINO_ARCH_RP2040
+                pSPI->begin();
+            #else
+                mySPI.begin(); // simple Arduino init (e.g. AVR)
+            #endif
+            #ifdef ARDUINO_SAMD_ZERO
 
-  myDMA.setTrigger(mySPI.getDMAC_ID_TX());
-  myDMA.setAction(DMA_TRIGGER_ACTON_BEAT);
+            myDMA.setTrigger(mySPI.getDMAC_ID_TX());
+            myDMA.setAction(DMA_TRIGGER_ACTON_BEAT);
 
-  stat = myDMA.allocate();
-  desc = myDMA.addDescriptor(
-    ucTXBuf,                    // move data from here
-    (void *)(mySPI.getDataRegister()),
-    100,                      // this many...
-    DMA_BEAT_SIZE_BYTE,               // bytes/hword/words
-    true,                             // increment source addr?
-    false);                           // increment dest addr?
+            stat = myDMA.allocate();
+            desc = myDMA.addDescriptor(
+                ucTXBuf,                    // move data from here
+                (void *)(mySPI.getDataRegister()),
+                100,                      // this many...
+                DMA_BEAT_SIZE_BYTE,               // bytes/hword/words
+                true,                             // increment source addr?
+                false);                           // increment dest addr?
 
-  myDMA.setCallback(dma_callback);
-#endif // ARDUINO_SAMD_ZERO
+            myDMA.setCallback(dma_callback);
+            #endif // ARDUINO_SAMD_ZERO
 
-#endif // _LINUX_
-#endif
+        #endif // _LINUX_
+    #endif
 #endif
 //
 // Start here if bit bang enabled
@@ -1776,8 +2333,6 @@ start_of_init:
         memcpy_P(d, s, sizeof(uc240x240InitList));
         s = d;
         s[6] = 0x00 + iBGR;
-        if (pLCD->iLCDFlags & FLAGS_INVERT)
-           s[1] = 0x20; // change inversion on (default) to off
         pLCD->iCurrentWidth = pLCD->iWidth = 240;
         pLCD->iCurrentHeight = pLCD->iHeight = 320;
 	if (pLCD->iLCDType == LCD_ST7789_240 || pLCD->iLCDType == LCD_ST7789_NOCS)
@@ -2997,6 +3552,8 @@ void dma_callback(Adafruit_ZeroDMA *dma) {
 // wait for previous transaction to complete
 void spilcdWaitDMA(void)
 {
+//Serial.println("spilcdWaitDMA");
+
 #ifdef HAS_DMA
     while (!transfer_is_done);
     myPinWrite(iCurrentCS, 1);

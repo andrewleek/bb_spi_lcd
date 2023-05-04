@@ -98,24 +98,30 @@ typedef struct {
 // Structure holding an instance of a display
 typedef struct tagSPILCD
 {
-   int iLCDType, iLCDFlags; // LCD display type and flags
-   int iOrientation; // current orientation
-   int iScrollOffset, bScroll;
-   int iWidth, iHeight; // native direction size
-   int iCurrentWidth, iCurrentHeight; // rotated size
-   int iCSPin, iCLKPin, iMOSIPin, iDCPin, iResetPin, iLEDPin;
-   int32_t iSPISpeed, iSPIMode; // SPI settings
-   int iScreenPitch, iOffset, iMaxOffset; // display RAM values
-   int iColStart, iRowStart, iMemoryX, iMemoryY; // display oddities
-   uint8_t *pBackBuffer;
-   int iWindowX, iWindowY, iCurrentX, iCurrentY; // for RAM operations
-   int iWindowCX, iWindowCY;
-   int iCursorX, iCursorY; // for text operations
-   int iFont, iWrap, iFG, iBG, iAntialias;
-   GFXfont *pFont;
-   int iOldX, iOldY, iOldCX, iOldCY; // to optimize spilcdSetPosition()
-   RESETCALLBACK pfnResetCallback;
-   DATACALLBACK pfnDataCallback;
+  int iLCDType, iLCDFlags; // LCD display type and flags
+  int iOrientation; // current orientation
+  int iScrollOffset, bScroll;
+  int iWidth, iHeight; // native direction size
+  int iCurrentWidth, iCurrentHeight; // rotated size
+  int iCSPin, iCLKPin, iMOSIPin, iDCPin, iResetPin, iLEDPin, iTCSPin;
+  bool touchEnabled;
+  int32_t iSPISpeed, iSPIMode, iTSPISpeed; // SPI settings
+  int iScreenPitch, iOffset, iMaxOffset; // display RAM values
+  int iColStart, iRowStart, iMemoryX, iMemoryY; // display oddities
+  uint8_t *pBackBuffer;
+  int iWindowX, iWindowY, iCurrentX, iCurrentY; // for RAM operations
+  int iWindowCX, iWindowCY;
+  int iCursorX, iCursorY; // for text operations
+  int iFont, iWrap, iFG, iBG, iAntialias;
+  GFXfont *pFont;
+  int iOldX, iOldY, iOldCX, iOldCY; // to optimize spilcdSetPosition()
+  RESETCALLBACK pfnResetCallback;
+  DATACALLBACK pfnDataCallback;
+  uint32_t pressTime; // Press and hold time-out
+  uint16_t pressX, pressY;  // For future use (last sampled calibrated coordinates)
+  // Initialise with example calibration values so processor does not crash if setTouch() not called in setup()
+  uint16_t touchCalibration_x0 = 300, touchCalibration_x1 = 3600, touchCalibration_y0 = 300, touchCalibration_y1 = 3600;
+  uint8_t  touchCalibration_rotate = 1, touchCalibration_invert_x = 2, touchCalibration_invert_y = 0;
 } SPILCD;
 
 #ifdef __cplusplus
@@ -171,6 +177,11 @@ class BB_SPI_LCD : public Print
 
   private:
     SPILCD _lcd;
+
+    // Handlers for the touch controller bus settings
+    inline void begin_touch_read_write() __attribute__((always_inline));
+    inline void end_touch_read_write()   __attribute__((always_inline));
+
 }; // class BB_SPI_LCD
 #endif // __cplusplus
 
@@ -247,14 +258,17 @@ int spilcdInit(SPILCD *pLCD, int iLCDType, int iFlags, int32_t iSPIFreq, int iCS
 //
 // Initialize the touch controller
 //
-int spilcdInitTouch(SPILCD *pLCD, int iType, int iChannel, int iSPIFreq);
+int spilcdInitTouch(SPILCD *pLCD, int iCSPin, int32_t iSPIFreq);
 
 //
 // Set touch calibration values
 // These are the minimum and maximum x/y values returned from the sensor
 // These values are used to normalize the position returned from the sensor
 //
-void spilcdTouchCalibration(SPILCD *pLCD, int iminx, int imaxx, int iminy, int imaxy);
+//void spilcdTouchCalibration(SPILCD *pLCD, int iminx, int imaxx, int iminy, int imaxy);
+
+// Run screen calibration and test, report calibration values to the serial port
+void spilcdCalibrateTouch(SPILCD *pLCD, uint16_t *data, uint32_t color_fg, uint32_t color_bg, uint8_t size);
 
 //
 // Shut down the touch interface
@@ -266,7 +280,31 @@ void spilcdShutdownTouch(SPILCD *pLCD);
 // values are normalized to 0-1023 range for x and y
 // returns: -1=not initialized, 0=nothing touching, 1=good values
 //
-int spilcdReadTouchPos(SPILCD *pLCD, int *pX, int *pY);
+//int spilcdReadTouchPos(SPILCD *pLCD, int *pX, int *pY);
+
+// Private function to validate a touch, allow settle time and reduce spurious coordinates
+uint8_t  spilcdValidTouch(SPILCD *pLCD, uint16_t *x, uint16_t *y, uint16_t threshold = 600);
+
+// Get raw x,y ADC values from touch controller
+uint8_t  spilcdGetTouchRaw(SPILCD *pLCD, uint16_t *x, uint16_t *y);
+
+// Get raw z (i.e. pressure) ADC value from touch controller
+uint16_t spilcdGetTouchRawZ(SPILCD *pLCD);
+
+// Convert raw x,y values to calibrated and correctly rotated screen coordinates
+void spilcdConvertRawXY(uint16_t *x, uint16_t *y);
+
+// Get the screen touch coordinates, returns true if screen has been touched
+// if the touch coordinates are off screen then x and y are not updated
+// The returned value can be treated as a bool type, false or 0 means touch not detected
+// In future the function may return an 8 "quality" (jitter) value.
+uint8_t  spilcdGetTouch(SPILCD *pLCD, uint16_t *x, uint16_t *y, uint16_t threshold = 600);
+
+// Run screen calibration and test, report calibration values to the serial port
+//void spilcdCalibrateTouch(SPILCD *pLCD, uint16_t *data, uint32_t color_fg, uint32_t color_bg, uint8_t size);
+
+// Set the screen calibration values
+void spilcdSetTouch(SPILCD *pLCD, uint16_t *data);
 
 // Turns off the display and frees the resources
 void spilcdShutdown(SPILCD *pLCD);
@@ -440,7 +478,6 @@ enum {
    LCD_ILI9488, // 320x480
    LCD_GC9A01, // 240x240 round
    LCD_GC9107, // 128x128 tiny (0.85")
-   LCD_GDOD0139, // 454x454 1.39" AMOLED
    LCD_VIRTUAL, // memory-only display
    LCD_VALID_MAX
 };
