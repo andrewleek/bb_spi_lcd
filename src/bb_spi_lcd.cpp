@@ -1888,8 +1888,8 @@ uint8_t spilcdValidTouch(SPILCD *pLCD, uint16_t *x, uint16_t *y, uint16_t thresh
 
     spilcdGetTouchRaw(pLCD,&x_tmp,&y_tmp);
 
-    Serial.print("Sample 1 x,y = "); Serial.print(x_tmp);Serial.print(",");Serial.print(y_tmp);
-    Serial.print(", Z = ");Serial.println(z1);
+    //Serial.print("Sample 1 x,y = "); Serial.print(x_tmp);Serial.print(",");Serial.print(y_tmp);
+    //Serial.print(", Z = ");Serial.println(z1);
 
     delay(1); // Small delay to the next sample
     if (spilcdGetTouchRawZ(pLCD) <= threshold) return false;
