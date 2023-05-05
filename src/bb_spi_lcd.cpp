@@ -1261,9 +1261,9 @@ void memset16(uint16_t *pDest, uint16_t usPattern, int iCount)
 //
 int spilcdIsDMABusy(void)
 {
-#ifdef HAS_DMA
-    return !transfer_is_done;
-#endif
+    #ifdef HAS_DMA
+        return !transfer_is_done;
+    #endif
     return 0;
 } /* spilcdIsDMABusy() */
 //
@@ -1276,7 +1276,7 @@ void SPI_BitBang(SPILCD *pLCD, uint8_t *pData, int iLen, int iMode)
     
     iMOSI = pLCD->iMOSIPin;
     iCLK = pLCD->iCLKPin;
-    myPinWrite(pLCD->iCSPin, 0);
+    myPinWrite(pLCD->iCSPin, LOW); // Enable LCD
     if (iMode == MODE_COMMAND)
         myPinWrite(pLCD->iDCPin, 0);
     while (iLen)
@@ -1305,9 +1305,9 @@ void SPI_BitBang(SPILCD *pLCD, uint8_t *pData, int iLen, int iMode)
         }
         iLen--;
     }
-    myPinWrite(pLCD->iCSPin, 1);
+    myPinWrite(pLCD->iCSPin, HIGH); // Disable LCD
     if (iMode == MODE_COMMAND) // restore it to MODE_DATA before leaving
-        myPinWrite(pLCD->iDCPin, 1);
+        myPinWrite(pLCD->iDCPin, HIGH);
 } /* SPI_BitBang() */
 //
 // Wrapper function for writing to SPI
@@ -1383,7 +1383,7 @@ static void myspiWrite(SPILCD *pLCD, unsigned char *pBuf, int iLen, int iMode, i
         #ifdef __AVR__
             *outCS &= ~bitCS;
         #else
-            myPinWrite(pLCD->iCSPin, 0);
+            myPinWrite(pLCD->iCSPin, LOW); // Enable LCD
         #endif // __AVR__
     }
 
@@ -1402,7 +1402,7 @@ static void myspiWrite(SPILCD *pLCD, unsigned char *pBuf, int iLen, int iMode, i
             assert(ret==ESP_OK);            //Should have had no issues.
             if (iMode == MODE_COMMAND) // restore D/C pin to DATA
                 spilcdSetMode(pLCD, MODE_DATA);
-            myPinWrite(pLCD->iCSPin, 1);
+            myPinWrite(pLCD->iCSPin, HIGH); // Disable LCD
             return;
         }
     #endif
@@ -1412,7 +1412,7 @@ static void myspiWrite(SPILCD *pLCD, unsigned char *pBuf, int iLen, int iMode, i
         {
             spilcdWaitDMA(); // wait for any previous transaction to finish
             iCurrentCS = pLCD->iCSPin;
-            myPinWrite(pLCD->iCSPin, LOW);
+            myPinWrite(pLCD->iCSPin, LOW); // Enable LCD
             if (pBuf != ucTXBuf) // for DMA, we must use the one output buffer
                 memcpy(ucTXBuf, pBuf, iLen);
             spilcdWriteDataDMA(pLCD, iLen);
@@ -1451,7 +1451,7 @@ static void myspiWrite(SPILCD *pLCD, unsigned char *pBuf, int iLen, int iMode, i
         #ifdef __AVR__
             *outCS |= bitCS;
         #else
-            myPinWrite(pLCD->iCSPin, HIGH);
+            myPinWrite(pLCD->iCSPin, HIGH); // Disable LCD
         #endif
     }
 } /* myspiWrite() */
@@ -1617,7 +1617,7 @@ inline void begin_touch_read_write(SPILCD *pLCD)
         spilcdWaitDMA(); // wait for any previous transaction to finish
     #endif
 
-    myPinWrite(pLCD->iCSPin, HIGH); // disable lcd
+    myPinWrite(pLCD->iCSPin, HIGH); // Disable lcd
 
     #ifdef ARDUINO_ARCH_RP2040
         #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS)
@@ -2313,7 +2313,7 @@ int spilcdInit(SPILCD *pLCD, int iType, int iFlags, int32_t iSPIFreq, int iCS, i
     if (pLCD->iCSPin != -1)
     {
         pinMode(pLCD->iCSPin, OUTPUT);
-        myPinWrite(pLCD->iCSPin, HIGH);
+        myPinWrite(pLCD->iCSPin, HIGH); // Disable LCD
     }
 	pinMode(pLCD->iDCPin, OUTPUT);
 	if (pLCD->iLEDPin != -1)
@@ -3534,24 +3534,21 @@ int spilcdSetPixel(SPILCD *pLCD, int x, int y, unsigned short usColor, int iFlag
 
 uint8_t * spilcdGetDMABuffer(void)
 {
-  return (uint8_t *)ucTXBuf;
+    return (uint8_t *)ucTXBuf;
 }
 
 #ifdef ESP32_DMA
-//This function is called (in irq context!) just before a transmission starts. It will
-//set the D/C line to the value indicated in the user field.
-static void spi_pre_transfer_callback(spi_transaction_t *t)
-{
-//    int iMode=(int)t->user;
-//    spilcdSetMode(iMode);
-}
-static void spi_post_transfer_callback(spi_transaction_t *t)
-{
-//    SPILCD *pLCD = (SPILCD*)t;
-    transfer_is_done = true;
-//    myPinWrite(iCurrentCS, 1);
-//    iCurrentCS = -1;
-}
+    //This function is called (in irq context!) just before a transmission starts. It will
+    //set the D/C line to the value indicated in the user field.
+    static void spi_pre_transfer_callback(spi_transaction_t *t)
+    {
+
+    }
+
+    static void spi_post_transfer_callback(spi_transaction_t *t)
+    {
+        transfer_is_done = true;
+    }
 #endif
 
 #ifdef ARDUINO_SAMD_ZERO
@@ -3559,7 +3556,7 @@ static void spi_post_transfer_callback(spi_transaction_t *t)
     void dma_callback(Adafruit_ZeroDMA *dma)
     {
         transfer_is_done = true;
-        myPinWrite(iCurrentCS, 1);
+        myPinWrite(iCurrentCS, HIGH); // Disable iCurrentCS device
         iCurrentCS = -1;
     }
 #endif // ARDUINO_SAMD_ZERO
@@ -3569,7 +3566,7 @@ void spilcdWaitDMA(void)
 {
     #ifdef HAS_DMA
         while (!transfer_is_done);
-        myPinWrite(iCurrentCS, 1);
+        myPinWrite(iCurrentCS, HIGH); // Disable iCurrentCS device
         iCurrentCS = -1;
 
         #ifdef ARDUINO_SAMD_ZERO
